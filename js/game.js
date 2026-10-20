@@ -12,6 +12,9 @@
   const GAME_STORE = 'dinoMatch.game';
   const GAME_MAX_AGE = 12 * 60 * 60 * 1000; // a saved game older than this starts fresh
   const DEFAULT_NAMES = ['Aidan', 'Baddy'];
+  // Odd numbers of pairs, so a game can't end in a tie.
+  const SIZES = [5, 9, 15];
+  const OLD_SIZES = { 6: 5, 10: 9 }; // earlier versions used 6 and 10 pairs
   const DINO_BY_ID = Object.fromEntries(DINOS.map((d) => [d.id, d]));
   const CARD_RATIO = 0.78; // width / height
   const MISS_SOUND_DELAY = 700;
@@ -49,7 +52,7 @@
 
   const state = {
     players: [{ name: DEFAULT_NAMES[0], score: 0 }, { name: DEFAULT_NAMES[1], score: 0 }],
-    pairs: 6,
+    pairs: SIZES[0],
     starter: 0,
     current: 0,
     deck: [],
@@ -100,7 +103,8 @@
         if (typeof saved.name1 === 'string') el.name1.value = saved.name1;
         // "Player 2" was the old default name; it's Baddy now
         if (typeof saved.name2 === 'string') el.name2.value = saved.name2 === 'Player 2' ? DEFAULT_NAMES[1] : saved.name2;
-        const radio = el.form.querySelector(`input[name="size"][value="${saved.pairs}"]`);
+        const pairs = OLD_SIZES[saved.pairs] || saved.pairs;
+        const radio = el.form.querySelector(`input[name="size"][value="${pairs}"]`);
         if (radio) radio.checked = true;
       }
     } catch (e) { /* ignore broken or blocked storage */ }
@@ -141,7 +145,7 @@
     try {
       const g = JSON.parse(localStorage.getItem(GAME_STORE) || 'null');
       if (!g || g.v !== 1 || !(Date.now() - g.t < GAME_MAX_AGE)) return null;
-      if (![6, 10, 15].includes(g.pairs) || !Array.isArray(g.deck) || g.deck.length !== g.pairs * 2) return null;
+      if (!SIZES.includes(g.pairs) || !Array.isArray(g.deck) || g.deck.length !== g.pairs * 2) return null;
       if (![0, 1].includes(g.current) || ![0, 1].includes(g.starter) || !Array.isArray(g.players) || g.players.length !== 2) return null;
       const finder = {};
       for (const c of g.deck) {
@@ -200,7 +204,7 @@
     state.players[0].name = el.name1.value.trim() || DEFAULT_NAMES[0];
     state.players[1].name = el.name2.value.trim() || DEFAULT_NAMES[1];
     const picked = el.form.querySelector('input[name="size"]:checked');
-    state.pairs = picked ? Number(picked.value) : 6;
+    state.pairs = picked ? Number(picked.value) : SIZES[0];
     state.starter = 0;
     saveSettings();
     startGame();
@@ -255,6 +259,7 @@
 
   function renderBoard() {
     el.board.innerHTML = '';
+    delete el.board.dataset.rows; // layoutBoard sorts the new cards into rows
     const frag = document.createDocumentFragment();
     state.deck.forEach((card, i) => {
       const btn = document.createElement('button');
@@ -281,8 +286,40 @@
     el.board.appendChild(frag);
   }
 
-  // Pick the column count that gives the biggest cards that fit on screen,
-  // using only complete rows (12, 20 and 30 all split evenly several ways).
+  // Row lengths for n cards in `rows` rows. Rows differ by at most one card
+  // and are arranged symmetrically (10 -> 2-3-3-2, 18 -> 4-3-4-3-4); a
+  // complete grid comes out as equal rows. Null if it can't be symmetric.
+  function balancedRows(n, rows) {
+    const base = Math.floor(n / rows);
+    const extra = n % rows;
+    if (base < 1) return null;
+    const long = new Set();
+    if (rows % 2 === 1 && extra > 0 && (extra === (rows + 1) / 2 || extra === (rows - 1) / 2)) {
+      // alternate long and short rows
+      for (let i = extra === (rows + 1) / 2 ? 0 : 1; i < rows; i += 2) long.add(i);
+    } else if (rows % 2 === 0 && extra % 2 === 1) {
+      return null;
+    } else {
+      // matching pairs of long rows from the middle out, plus the centre row if needed
+      const mid = (rows - 1) / 2;
+      let left = extra;
+      if (extra % 2 === 1) {
+        long.add(mid);
+        left--;
+      }
+      for (let d = rows % 2 ? 1 : 0.5; left > 0; d++) {
+        long.add(mid - d);
+        long.add(mid + d);
+        left -= 2;
+      }
+    }
+    return Array.from({ length: rows }, (_, i) => base + (long.has(i) ? 1 : 0));
+  }
+
+  // Pick the row layout that gives the biggest cards that fit on screen.
+  // Complete grids are the default; on a board taller than it is wide
+  // (a phone held upright), balanced rows can win if the cards come out
+  // clearly bigger.
   function layoutBoard() {
     if (el.game.hidden || !state.deck.length) return;
     const wrap = el.boardWrap;
@@ -293,28 +330,45 @@
     const gap = Math.round(Math.max(W < 500 ? 5 : 6, Math.min(14, Math.min(W, H) / 60)));
 
     let best = null;
-    for (let cols = 2; cols <= n; cols++) {
-      if (n % cols !== 0) continue;
-      const rows = n / cols;
+    for (let rows = 1; rows <= n; rows++) {
+      const counts = balancedRows(n, rows);
+      const complete = n % rows === 0;
+      if (!counts || (!complete && W >= H)) continue;
+      const cols = Math.max(...counts);
       const byWidth = (W - gap * (cols - 1)) / cols;
       const byHeight = ((H - gap * (rows - 1)) / rows) * CARD_RATIO;
       const w = Math.min(byWidth, byHeight);
-      if (!best || w > best.w) best = { cols, w };
+      const score = complete ? w : w / 1.05;
+      if (!best || score > best.score) best = { counts, w, score };
     }
 
     // Always fit the whole board on screen: scrolling a phone mid-game is how
     // pages get refreshed by accident. Only a truly tiny screen scrolls.
     let w = Math.min(best.w, 230);
-    let cols = best.cols;
+    let counts = best.counts;
     if (w < 44) {
       w = 56;
-      cols = Math.max(2, Math.floor((W + gap) / (w + gap)));
+      const cols = Math.max(2, Math.floor((W + gap) / (w + gap)));
+      counts = Array.from({ length: Math.ceil(n / cols) }, (_, i) => Math.min(cols, n - i * cols));
     }
     w = Math.floor(w);
     el.board.classList.toggle('compact', w < 92);
     el.board.style.setProperty('--card-w', `${w}px`);
     el.board.style.setProperty('--gap', `${gap}px`);
-    el.board.style.width = `${cols * w + (cols - 1) * gap}px`;
+
+    // regroup the cards into rows only when the shape changes
+    const shape = counts.join('-');
+    if (el.board.dataset.rows === shape) return;
+    el.board.dataset.rows = shape;
+    const frag = document.createDocumentFragment();
+    let i = 0;
+    for (const count of counts) {
+      const row = document.createElement('div');
+      row.className = 'board-row';
+      for (let k = 0; k < count; k++) row.appendChild(state.deck[i++].node);
+      frag.appendChild(row);
+    }
+    el.board.replaceChildren(frag);
   }
 
   let resizeTimer = null;
@@ -562,6 +616,7 @@
     state.deck = [];
     state.afterFact = null;
     el.board.innerHTML = '';
+    delete el.board.dataset.rows;
     el.game.hidden = true;
     el.setup.hidden = false;
     document.documentElement.style.setProperty('--turn', PLAYER_COLORS[0]);

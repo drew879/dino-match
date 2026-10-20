@@ -7,7 +7,8 @@ look alike.
 ## How to play
 
 1. Type in both players' names (Aidan and Baddy to start) and pick a game
-   length: **Quick** (12 cards), **Medium** (20) or **Long** (30).
+   length: **Quick** (10 cards), **Medium** (18) or **Long** (30). Each one has
+   an odd number of pairs, so there's always a winner.
 2. Take turns flipping two cards. Find a matching pair and you score it, see a
    fun fact about that dinosaur, and go again. If the cards don't match, they
    flip back and it's the other player's turn.
