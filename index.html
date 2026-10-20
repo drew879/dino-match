@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Aidan's Raptor Match</title>
+  <meta name="description" content="A two-player dinosaur memory match game, with a focus on raptors.">
+  <meta name="theme-color" content="#2f6b3a">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <!-- Start screen -->
+  <main id="setup" class="screen setup">
+    <div class="panel">
+      <div class="hero">
+        <div class="hero-art" id="heroLeft" aria-hidden="true"></div>
+        <h1><span class="owner">Aidan's</span> <span class="game-name">Raptor Match</span></h1>
+        <div class="hero-art flip" id="heroRight" aria-hidden="true"></div>
+      </div>
+      <p class="tagline">Take turns flipping two cards. Find a matching pair and you get another turn!</p>
+
+      <form id="setupForm" autocomplete="off">
+        <fieldset>
+          <legend>Who's playing?</legend>
+          <div class="players">
+            <label class="player-field p1">
+              <span class="player-tag">Player 1</span>
+              <input id="name1" type="text" maxlength="14" value="Aidan" spellcheck="false">
+            </label>
+            <label class="player-field p2">
+              <span class="player-tag">Player 2</span>
+              <input id="name2" type="text" maxlength="14" value="Player 2" spellcheck="false">
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>How long a game?</legend>
+          <div class="sizes">
+            <label class="size">
+              <input type="radio" name="size" value="6" checked>
+              <span class="size-card">
+                <span class="size-label">Quick</span>
+                <span class="size-count">12</span>
+                <span class="size-unit">cards</span>
+              </span>
+            </label>
+            <label class="size">
+              <input type="radio" name="size" value="10">
+              <span class="size-card">
+                <span class="size-label">Medium</span>
+                <span class="size-count">20</span>
+                <span class="size-unit">cards</span>
+              </span>
+            </label>
+            <label class="size">
+              <input type="radio" name="size" value="15">
+              <span class="size-card">
+                <span class="size-label">Long</span>
+                <span class="size-count">30</span>
+                <span class="size-unit">cards</span>
+              </span>
+            </label>
+          </div>
+        </fieldset>
+
+        <button type="submit" class="btn btn-go">Let's play!</button>
+      </form>
+
+      <button type="button" class="sound-toggle" data-sound-toggle>
+        <span class="sound-icon" aria-hidden="true"></span><span class="sound-label">Sound on</span>
+      </button>
+    </div>
+  </main>
+
+  <!-- Game screen -->
+  <div id="game" class="screen game" hidden>
+    <header class="topbar">
+      <button type="button" class="icon-btn" id="homeBtn" aria-label="Back to the start screen">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v9.5h13V10"/><path d="M10 19.5v-5h4v5"/></svg>
+      </button>
+      <div class="scores">
+        <div class="score p1" id="score1">
+          <span class="score-name"></span>
+          <span class="score-num">0</span>
+          <span class="score-turn">Your turn!</span>
+        </div>
+        <div class="pairs-left" id="pairsLeft"></div>
+        <div class="score p2" id="score2">
+          <span class="score-name"></span>
+          <span class="score-num">0</span>
+          <span class="score-turn">Your turn!</span>
+        </div>
+      </div>
+      <button type="button" class="icon-btn" data-sound-toggle aria-label="Sound on">
+        <span class="sound-icon" aria-hidden="true"></span>
+      </button>
+    </header>
+    <div class="board-wrap" id="boardWrap">
+      <div class="board" id="board"></div>
+    </div>
+    <p class="sr-only" id="announce" aria-live="polite"></p>
+  </div>
+
+  <!-- Fun fact popup -->
+  <div class="overlay" id="factOverlay" hidden>
+    <div class="dialog fact-dialog" role="dialog" aria-modal="true" aria-labelledby="factName">
+      <p class="fact-who" id="factWho"></p>
+      <div class="fact-art" id="factArt"></div>
+      <h2 class="fact-name" id="factName"></h2>
+      <p class="fact-say" id="factSay"></p>
+      <p class="fact-badge" id="factBadge">Raptor</p>
+      <p class="fact-text" id="factText"></p>
+      <button type="button" class="btn" id="factClose">Keep going!</button>
+    </div>
+  </div>
+
+  <!-- Winner popup -->
+  <div class="overlay" id="winOverlay" hidden>
+    <div class="dialog win-dialog" role="dialog" aria-modal="true" aria-labelledby="winTitle">
+      <div class="win-art" id="winArt"></div>
+      <h2 class="win-title" id="winTitle"></h2>
+      <div class="win-scores" id="winScores"></div>
+      <div class="dialog-buttons">
+        <button type="button" class="btn" id="againBtn">Play again</button>
+        <button type="button" class="btn btn-quiet" id="newBtn">Change game</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Leave-game check -->
+  <div class="overlay" id="quitOverlay" hidden>
+    <div class="dialog quit-dialog" role="dialog" aria-modal="true" aria-labelledby="quitTitle">
+      <h2 id="quitTitle">Leave this game?</h2>
+      <p>The scores for this game will be lost.</p>
+      <div class="dialog-buttons">
+        <button type="button" class="btn" id="stayBtn">Keep playing</button>
+        <button type="button" class="btn btn-quiet" id="leaveBtn">Leave game</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="confetti" id="confetti" aria-hidden="true"></div>
+
+  <script src="js/art.js"></script>
+  <script src="js/art-custom.js"></script>
+  <script src="js/dinos.js"></script>
+  <script src="js/sound.js"></script>
+  <script src="js/game.js"></script>
+</body>
+</html>
