@@ -2,6 +2,10 @@
  * Little sound effects made with the Web Audio API, so there are no audio
  * files to load. Browsers only allow audio after a tap, so `unlock()` is
  * called from the first button press.
+ *
+ * iPhones treat Web Audio as "ambient" sound, which the ringer switch mutes.
+ * Safari 16.4+ lets a page ask for "playback" audio instead; older iOS needs a
+ * silent looping <audio> element to move Web Audio onto the media channel.
  */
 (function () {
   'use strict';
@@ -15,7 +19,52 @@
     enabled = localStorage.getItem(KEY) !== 'off';
   } catch (e) { /* storage unavailable: keep the default */ }
 
+  const hasAudioSession = 'audioSession' in navigator;
+  if (hasAudioSession) {
+    try {
+      navigator.audioSession.type = 'playback';
+    } catch (e) { /* not allowed here: fall through to the defaults */ }
+  }
+
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  let silentTag = null;
+
+  // Half a second of 8-bit silence as a WAV file.
+  function silentWavUrl() {
+    const rate = 8000;
+    const n = rate / 2;
+    const buf = new ArrayBuffer(44 + n);
+    const v = new DataView(buf);
+    const str = (o, text) => { for (let i = 0; i < text.length; i++) v.setUint8(o + i, text.charCodeAt(i)); };
+    str(0, 'RIFF'); v.setUint32(4, 36 + n, true); str(8, 'WAVE'); str(12, 'fmt ');
+    v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, rate, true); v.setUint32(28, rate, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true);
+    str(36, 'data'); v.setUint32(40, n, true);
+    for (let i = 0; i < n; i++) v.setUint8(44 + i, 128);
+    return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+  }
+
+  // Older iOS only: keep a silent clip looping so sounds play with the ringer off.
+  function keepMediaChannel() {
+    if (hasAudioSession || !isIOS) return;
+    if (!silentTag) {
+      silentTag = document.createElement('audio');
+      silentTag.setAttribute('x-webkit-airplay', 'deny');
+      silentTag.setAttribute('playsinline', '');
+      silentTag.loop = true;
+      silentTag.src = silentWavUrl();
+    }
+    if (silentTag.paused) silentTag.play().catch(() => {});
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && silentTag) silentTag.pause();
+  });
+
   function unlock() {
+    if (!enabled) return;
+    keepMediaChannel();
     if (!ctx) {
       const AC = window.AudioContext || window.webkitAudioContext;
       if (!AC) return;
@@ -24,7 +73,8 @@
       out.gain.value = 0.7;
       out.connect(ctx.destination);
     }
-    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+    // iOS can leave the context "interrupted" after a call or app switch
+    if (ctx.state !== 'running') ctx.resume().catch(() => {});
   }
 
   function ready() {
@@ -57,25 +107,49 @@
     return buf;
   }
 
-  // A soft "thwip" for flipping a card.
-  function flip() {
-    if (!ready()) return;
-    const t = ctx.currentTime;
+  // A short burst of filtered noise.
+  function noiseHit(at, dur, vol, filters) {
+    const t = ctx.currentTime + at;
     const src = ctx.createBufferSource();
-    src.buffer = noiseBuffer(0.12);
-    const bp = ctx.createBiquadFilter();
-    bp.type = 'bandpass';
-    bp.Q.value = 1.2;
-    bp.frequency.setValueAtTime(1200, t);
-    bp.frequency.exponentialRampToValueAtTime(3600, t + 0.09);
+    src.buffer = noiseBuffer(dur + 0.02);
+    let node = src;
+    for (const make of filters) {
+      const flt = make(t);
+      node.connect(flt);
+      node = flt;
+    }
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.35, t + 0.01);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.1);
-    src.connect(bp).connect(g).connect(out);
+    g.gain.exponentialRampToValueAtTime(vol, t + Math.min(0.008, dur / 4));
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    node.connect(g).connect(out);
     src.start(t);
-    tone(520, 0, 0.08, { type: 'triangle', slide: 820, vol: 0.08 });
+    src.stop(t + dur + 0.02);
   }
+
+  function filter(type, freq, q, sweepTo, sweepTime) {
+    return (t) => {
+      const flt = ctx.createBiquadFilter();
+      flt.type = type;
+      flt.Q.value = q;
+      flt.frequency.setValueAtTime(freq, t);
+      if (sweepTo) flt.frequency.exponentialRampToValueAtTime(sweepTo, t + sweepTime);
+      return flt;
+    };
+  }
+
+  // A papery card flick: a quick swish as the card turns, then a soft tap as it lands.
+  function cardFlip(level) {
+    if (!ready()) return;
+    noiseHit(0, 0.075, 0.4 * level, [filter('highpass', 700, 0.7), filter('bandpass', 4200, 0.7, 1500, 0.07)]);
+    noiseHit(0.055, 0.035, 0.52 * level, [filter('lowpass', 2400, 0.7)]);
+    tone(170, 0.055, 0.06, { type: 'sine', vol: 0.1 * level, slide: 90 });
+  }
+
+  function flip() { cardFlip(1); }
+
+  // Softer, for cards turning back face down.
+  function flipDown() { cardFlip(0.55); }
 
   // A happy rising chime for a match.
   function match() {
@@ -176,5 +250,5 @@
     if (on) unlock();
   }
 
-  window.Sound = { unlock, flip, match, miss, roar, win, setEnabled, isEnabled: () => enabled };
+  window.Sound = { unlock, flip, flipDown, match, miss, roar, win, setEnabled, isEnabled: () => enabled };
 })();

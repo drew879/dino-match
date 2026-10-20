@@ -140,7 +140,7 @@
     },
     {
       id: 'sinornithosaurus',
-      name: `Sinornitho${SH}saurus`,
+      name: `Sin${SH}ornitho${SH}saurus`,
       say: 'SYE-nor-NITH-oh-SOR-us',
       raptor: true,
       bg: '#feead6',
@@ -182,7 +182,7 @@
     },
     {
       id: 'pachycephalosaurus',
-      name: `Pachycephalo${SH}saurus`,
+      name: `Pachy${SH}cephalo${SH}saurus`,
       say: 'PAK-ee-SEF-uh-loh-SOR-us',
       raptor: false,
       bg: '#f3e6f6',

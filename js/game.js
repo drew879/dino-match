@@ -9,6 +9,10 @@
   const DINOS = window.DINOS;
   const Sound = window.Sound;
   const STORE = 'dinoMatch.settings';
+  const GAME_STORE = 'dinoMatch.game';
+  const GAME_MAX_AGE = 12 * 60 * 60 * 1000; // a saved game older than this starts fresh
+  const DEFAULT_NAMES = ['Aidan', 'Baddy'];
+  const DINO_BY_ID = Object.fromEntries(DINOS.map((d) => [d.id, d]));
   const CARD_RATIO = 0.78; // width / height
   const MISS_SOUND_DELAY = 700;
   const MISS_FLIP_BACK_DELAY = 1500;
@@ -44,7 +48,7 @@
   const PLAYER_COLORS = ['var(--p1)', 'var(--p2)'];
 
   const state = {
-    players: [{ name: 'Aidan', score: 0 }, { name: 'Player 2', score: 0 }],
+    players: [{ name: DEFAULT_NAMES[0], score: 0 }, { name: DEFAULT_NAMES[1], score: 0 }],
     pairs: 6,
     starter: 0,
     current: 0,
@@ -94,7 +98,8 @@
       const saved = JSON.parse(localStorage.getItem(STORE) || 'null');
       if (saved) {
         if (typeof saved.name1 === 'string') el.name1.value = saved.name1;
-        if (typeof saved.name2 === 'string') el.name2.value = saved.name2;
+        // "Player 2" was the old default name; it's Baddy now
+        if (typeof saved.name2 === 'string') el.name2.value = saved.name2 === 'Player 2' ? DEFAULT_NAMES[1] : saved.name2;
         const radio = el.form.querySelector(`input[name="size"][value="${saved.pairs}"]`);
         if (radio) radio.checked = true;
       }
@@ -105,6 +110,55 @@
     try {
       localStorage.setItem(STORE, JSON.stringify({ name1: el.name1.value, name2: el.name2.value, pairs: state.pairs }));
     } catch (e) { /* ignore */ }
+  }
+
+  /* ---------- picking a game back up after a refresh ---------- */
+
+  // Saved after every turn. `current` can be passed ahead of time, so a
+  // refresh during a miss still hands the turn to the other player.
+  function saveGame(current = state.current) {
+    try {
+      localStorage.setItem(GAME_STORE, JSON.stringify({
+        v: 1,
+        t: Date.now(),
+        pairs: state.pairs,
+        starter: state.starter,
+        current,
+        players: state.players.map((p) => ({ name: p.name, score: p.score })),
+        deck: state.deck.map((c) => ({ id: c.dino.id, by: c.matched ? c.by : null })),
+      }));
+    } catch (e) { /* ignore */ }
+  }
+
+  function clearGame() {
+    try {
+      localStorage.removeItem(GAME_STORE);
+    } catch (e) { /* ignore */ }
+  }
+
+  // Returns the saved game, or null if there isn't a usable one.
+  function loadGame() {
+    try {
+      const g = JSON.parse(localStorage.getItem(GAME_STORE) || 'null');
+      if (!g || g.v !== 1 || !(Date.now() - g.t < GAME_MAX_AGE)) return null;
+      if (![6, 10, 15].includes(g.pairs) || !Array.isArray(g.deck) || g.deck.length !== g.pairs * 2) return null;
+      if (![0, 1].includes(g.current) || ![0, 1].includes(g.starter) || !Array.isArray(g.players) || g.players.length !== 2) return null;
+      const finder = {};
+      for (const c of g.deck) {
+        if (!DINO_BY_ID[c.id] || ![null, 0, 1].includes(c.by)) return null;
+        if (!(c.id in finder)) finder[c.id] = [];
+        finder[c.id].push(c.by);
+      }
+      // every dinosaur twice, both cards found by the same player (or neither)
+      if (Object.values(finder).some((f) => f.length !== 2 || f[0] !== f[1])) return null;
+      for (let i = 0; i < 2; i++) {
+        const p = g.players[i];
+        if (typeof p.name !== 'string' || p.score !== g.deck.filter((c) => c.by === i).length / 2) return null;
+      }
+      return g;
+    } catch (e) {
+      return null;
+    }
   }
 
   /* ---------- sound buttons ---------- */
@@ -143,8 +197,8 @@
   el.form.addEventListener('submit', (e) => {
     e.preventDefault();
     Sound.unlock();
-    state.players[0].name = el.name1.value.trim() || 'Player 1';
-    state.players[1].name = el.name2.value.trim() || 'Player 2';
+    state.players[0].name = el.name1.value.trim() || DEFAULT_NAMES[0];
+    state.players[1].name = el.name2.value.trim() || DEFAULT_NAMES[1];
     const picked = el.form.querySelector('input[name="size"]:checked');
     state.pairs = picked ? Number(picked.value) : 6;
     state.starter = 0;
@@ -162,25 +216,40 @@
     return raptors.slice(0, nRaptors).concat(others.slice(0, pairs - nRaptors));
   }
 
-  function startGame() {
+  // Deals a new game, or restores `saved` (from loadGame) exactly as it was.
+  function startGame(saved) {
     clearTimers();
     hideOverlay(el.winOverlay);
     hideOverlay(el.factOverlay);
     el.confetti.innerHTML = '';
-    state.players.forEach((p) => { p.score = 0; });
-    state.current = state.starter;
     state.flipped = [];
     state.lock = false;
     state.over = false;
 
-    const dinos = pickDinos(state.pairs);
-    state.deck = shuffle(dinos.flatMap((d) => [d, d])).map((dino, index) => ({ dino, index, up: false, matched: false, by: null }));
+    if (saved) {
+      state.players = saved.players.map((p) => ({ name: p.name, score: p.score }));
+      state.pairs = saved.pairs;
+      state.starter = saved.starter;
+      state.current = saved.current;
+      state.deck = saved.deck.map((c, index) => ({ dino: DINO_BY_ID[c.id], index, up: false, matched: c.by !== null, by: c.by }));
+    } else {
+      state.players.forEach((p) => { p.score = 0; });
+      state.current = state.starter;
+      const dinos = pickDinos(state.pairs);
+      state.deck = shuffle(dinos.flatMap((d) => [d, d])).map((dino, index) => ({ dino, index, up: false, matched: false, by: null }));
+    }
 
     el.setup.hidden = true;
     el.game.hidden = false;
+    document.documentElement.classList.add('in-game');
     renderBoard();
     renderScores();
     layoutBoard();
+    saveGame();
+    if (state.deck.every((c) => c.matched)) {
+      endGame();
+      return;
+    }
     announce(`${possessive(state.players[state.current].name)} turn. Find the matching dinosaurs!`);
   }
 
@@ -206,12 +275,14 @@
         '</span>' +
         '<span class="card-badge"></span>';
       card.node = btn;
+      if (card.matched) markMatched(card);
       frag.appendChild(btn);
     });
     el.board.appendChild(frag);
   }
 
-  // Pick the column count that gives the biggest cards that fit on screen.
+  // Pick the column count that gives the biggest cards that fit on screen,
+  // using only complete rows (12, 20 and 30 all split evenly several ways).
   function layoutBoard() {
     if (el.game.hidden || !state.deck.length) return;
     const wrap = el.boardWrap;
@@ -219,30 +290,28 @@
     const W = wrap.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
     const H = wrap.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
     const n = state.deck.length;
-    const gap = Math.round(Math.max(6, Math.min(14, Math.min(W, H) / 60)));
+    const gap = Math.round(Math.max(W < 500 ? 5 : 6, Math.min(14, Math.min(W, H) / 60)));
 
     let best = null;
     for (let cols = 2; cols <= n; cols++) {
-      const rows = Math.ceil(n / cols);
+      if (n % cols !== 0) continue;
+      const rows = n / cols;
       const byWidth = (W - gap * (cols - 1)) / cols;
       const byHeight = ((H - gap * (rows - 1)) / rows) * CARD_RATIO;
       const w = Math.min(byWidth, byHeight);
-      const empty = rows * cols - n;
-      // prefer full rows, but accept a short last row for noticeably bigger cards
-      const tidy = empty === 0 ? 1 : empty <= 2 ? 0.95 : 0.88;
-      const score = w * tidy;
-      if (!best || score > best.score) best = { cols, w, score };
+      if (!best || w > best.w) best = { cols, w };
     }
 
-    const minW = W < 500 ? 84 : 96;
+    // Always fit the whole board on screen: scrolling a phone mid-game is how
+    // pages get refreshed by accident. Only a truly tiny screen scrolls.
     let w = Math.min(best.w, 230);
     let cols = best.cols;
-    if (w < minW) {
-      // too small to read: keep a readable size and let the board scroll
-      w = Math.min(minW, (W - gap) / 2);
+    if (w < 44) {
+      w = 56;
       cols = Math.max(2, Math.floor((W + gap) / (w + gap)));
     }
     w = Math.floor(w);
+    el.board.classList.toggle('compact', w < 92);
     el.board.style.setProperty('--card-w', `${w}px`);
     el.board.style.setProperty('--gap', `${gap}px`);
     el.board.style.width = `${cols * w + (cols - 1) * gap}px`;
@@ -304,6 +373,7 @@
     if (a.dino.id === b.dino.id) {
       later(() => foundPair(a, b), 480);
     } else {
+      saveGame(1 - state.current);
       later(() => {
         Sound.miss();
         a.node.classList.add('shake');
@@ -322,14 +392,13 @@
       card.up = false;
       card.by = who;
       card.node.classList.remove('up');
-      card.node.classList.add('matched', 'pop');
-      card.node.style.setProperty('--by', PLAYER_COLORS[who]);
-      card.node.querySelector('.card-badge').textContent = (Array.from(player.name)[0] || '?').toUpperCase();
-      card.node.setAttribute('aria-label', `${card.dino.plainName}, found by ${player.name}`);
+      markMatched(card);
+      card.node.classList.add('pop');
     }
     state.flipped = [];
     Sound.match();
     renderScores();
+    saveGame();
     el.score[who].classList.add('bump');
     later(() => el.score[who].classList.remove('bump'), 600);
     later(() => {
@@ -348,15 +417,26 @@
     }, 650);
   }
 
+  // Found pairs stay face up, wearing the finder's colour and initial.
+  function markMatched(card) {
+    const player = state.players[card.by];
+    card.node.classList.add('matched');
+    card.node.style.setProperty('--by', PLAYER_COLORS[card.by]);
+    card.node.querySelector('.card-badge').textContent = (Array.from(player.name)[0] || '?').toUpperCase();
+    card.node.setAttribute('aria-label', `${card.dino.plainName}, found by ${player.name}`);
+  }
+
   function missedPair(a, b) {
     for (const card of [a, b]) {
       card.up = false;
       card.node.classList.remove('up', 'shake');
       card.node.setAttribute('aria-label', `Card ${card.index + 1}, face down`);
     }
+    Sound.flipDown();
     state.flipped = [];
     state.current = 1 - state.current;
     renderScores();
+    saveGame();
     announce(`Not a match. ${possessive(state.players[state.current].name)} turn.`);
     state.lock = false;
   }
@@ -416,6 +496,7 @@
   function endGame() {
     state.over = true;
     state.lock = true;
+    clearGame();
     renderScores();
     const [p1, p2] = state.players;
     const tie = p1.score === p2.score;
@@ -425,7 +506,7 @@
     const star = raptorsInGame[Math.floor(Math.random() * raptorsInGame.length)] || DINOS[0];
     el.winArt.innerHTML = star.art();
     el.winTitle.textContent = tie ? "It's a tie!" : `${state.players[winner].name} wins!`;
-    el.winTitle.style.setProperty('--who', tie ? 'var(--green)' : PLAYER_COLORS[winner]);
+    el.winTitle.style.setProperty('--who', tie ? 'var(--navy)' : PLAYER_COLORS[winner]);
     el.winScores.innerHTML = '';
     state.players.forEach((p, i) => {
       const chip = document.createElement('div');
@@ -440,7 +521,9 @@
     showOverlay(el.winOverlay, $('againBtn'));
     announce(tie ? `It's a tie, ${p1.score} pairs each!` : `${state.players[winner].name} wins with ${state.players[winner].score} pairs!`);
     Sound.win();
-    confetti(tie ? ['#ec7a1c', '#2f7fd6', '#4f9a5c', '#f2c94c'] : winner === 0 ? ['#ec7a1c', '#f2c94c', '#fde4c9', '#4f9a5c'] : ['#2f7fd6', '#7fb6f0', '#f2c94c', '#4f9a5c']);
+    const blues = ['#1f86e0', '#7fb8f2', '#f2c94c', '#24427f'];
+    const oranges = ['#ee7a1a', '#f2c94c', '#fdc890', '#24427f'];
+    confetti(tie ? ['#1f86e0', '#ee7a1a', '#f2c94c', '#24427f'] : winner === 0 ? blues : oranges);
   }
 
   function confetti(colors) {
@@ -472,6 +555,8 @@
 
   function goHome() {
     clearTimers();
+    clearGame();
+    document.documentElement.classList.remove('in-game');
     for (const o of [el.winOverlay, el.factOverlay, el.quitOverlay]) hideOverlay(o);
     el.confetti.innerHTML = '';
     state.deck = [];
@@ -505,4 +590,7 @@
   loadSettings();
   renderHero();
   renderSoundButtons();
+
+  const savedGame = loadGame();
+  if (savedGame) startGame(savedGame);
 })();

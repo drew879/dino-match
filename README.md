@@ -6,8 +6,8 @@ look alike.
 
 ## How to play
 
-1. Type in both players' names and pick a game length: **Quick** (12 cards),
-   **Medium** (20) or **Long** (30).
+1. Type in both players' names (Aidan and Baddy to start) and pick a game
+   length: **Quick** (12 cards), **Medium** (20) or **Long** (30).
 2. Take turns flipping two cards. Find a matching pair and you score it, see a
    fun fact about that dinosaur, and go again. If the cards don't match, they
    flip back and it's the other player's turn.
@@ -15,7 +15,11 @@ look alike.
    its fun fact again.
 
 Each game deals a random mix that's about two-thirds raptors. "Play again"
-swaps who goes first.
+swaps who goes first. If the page reloads in the middle of a game, it picks up
+right where it left off.
+
+Sound works on iPhones even with the ringer switch off. One side effect of
+that: starting the game's sounds can pause music playing in another app.
 
 ## Putting it online with GitHub Pages
 
