@@ -15,6 +15,13 @@ look alike.
 3. Whoever finds the most pairs wins. Tap any pair you've already found to see
    its fun fact again.
 
+### Best of five
+
+Flip the switch under the game length from **One game** to **Best of 5** to
+play a series at that size. The first player to win 3 games takes it, so a
+series lasts 3 to 5 games, and players take turns going first. Dots under each
+name show games won so far.
+
 Each game deals a random mix that's about two-thirds raptors. "Play again"
 swaps who goes first. If the page reloads in the middle of a game, it picks up
 right where it left off.

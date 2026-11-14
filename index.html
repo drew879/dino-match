@@ -69,6 +69,20 @@
           </div>
         </fieldset>
 
+        <fieldset class="series-field">
+          <legend class="sr-only">How many games?</legend>
+          <div class="segmented">
+            <label class="seg">
+              <input type="radio" name="series" value="1" checked>
+              <span>One game</span>
+            </label>
+            <label class="seg">
+              <input type="radio" name="series" value="5">
+              <span>Best of 5</span>
+            </label>
+          </div>
+        </fieldset>
+
         <button type="submit" class="btn btn-go">Let's play!</button>
       </form>
 
@@ -86,13 +100,19 @@
       </button>
       <div class="scores">
         <div class="score p1" id="score1">
-          <span class="score-name"></span>
+          <span class="score-who">
+            <span class="score-name"></span>
+            <span class="pips" aria-hidden="true"></span>
+          </span>
           <span class="score-num">0</span>
           <span class="score-turn">Your turn!</span>
         </div>
         <div class="pairs-left" id="pairsLeft"></div>
         <div class="score p2" id="score2">
-          <span class="score-name"></span>
+          <span class="score-who">
+            <span class="score-name"></span>
+            <span class="pips" aria-hidden="true"></span>
+          </span>
           <span class="score-num">0</span>
           <span class="score-turn">Your turn!</span>
         </div>
@@ -125,7 +145,9 @@
     <div class="dialog win-dialog" role="dialog" aria-modal="true" aria-labelledby="winTitle">
       <div class="win-art" id="winArt"></div>
       <h2 class="win-title" id="winTitle"></h2>
+      <p class="win-detail" id="winDetail" hidden></p>
       <div class="win-scores" id="winScores"></div>
+      <p class="win-note" id="winNote" hidden></p>
       <div class="dialog-buttons">
         <button type="button" class="btn" id="againBtn">Play again</button>
         <button type="button" class="btn btn-quiet" id="newBtn">Change game</button>
@@ -137,7 +159,7 @@
   <div class="overlay" id="quitOverlay" hidden>
     <div class="dialog quit-dialog" role="dialog" aria-modal="true" aria-labelledby="quitTitle">
       <h2 id="quitTitle">Leave this game?</h2>
-      <p>The scores for this game will be lost.</p>
+      <p id="quitText">The scores for this game will be lost.</p>
       <div class="dialog-buttons">
         <button type="button" class="btn" id="stayBtn">Keep playing</button>
         <button type="button" class="btn btn-quiet" id="leaveBtn">Leave game</button>

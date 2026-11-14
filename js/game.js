@@ -15,6 +15,8 @@
   // Odd numbers of pairs, so a game can't end in a tie.
   const SIZES = [5, 9, 15];
   const OLD_SIZES = { 6: 5, 10: 9 }; // earlier versions used 6 and 10 pairs
+  const SERIES_GAMES = 5; // best of five: first to three game wins
+  const SERIES_TO_WIN = 3;
   const DINO_BY_ID = Object.fromEntries(DINOS.map((d) => [d.id, d]));
   const CARD_RATIO = 0.78; // width / height
   const MISS_SOUND_DELAY = 700;
@@ -43,8 +45,15 @@
     winOverlay: $('winOverlay'),
     winArt: $('winArt'),
     winTitle: $('winTitle'),
+    winDetail: $('winDetail'),
     winScores: $('winScores'),
+    winNote: $('winNote'),
+    againBtn: $('againBtn'),
+    newBtn: $('newBtn'),
     quitOverlay: $('quitOverlay'),
+    quitTitle: $('quitTitle'),
+    quitText: $('quitText'),
+    leaveBtn: $('leaveBtn'),
     confetti: $('confetti'),
   };
 
@@ -61,6 +70,7 @@
     over: false,
     timers: [],
     afterFact: null,
+    series: null, // during a best of five: { wins: [games won by player 1, by player 2] }
   };
 
   /* ---------- helpers ---------- */
@@ -91,6 +101,29 @@
     return /s$/i.test(name) ? `${name}'` : `${name}'s`;
   }
 
+  // Which game of the best of five is being played (1-5).
+  function gameNumber() {
+    return state.series.wins[0] + state.series.wins[1] + 1;
+  }
+
+  // The player who has won the best of five, or -1 (also when there's no series).
+  function seriesWinner() {
+    return state.series ? state.series.wins.findIndex((w) => w >= SERIES_TO_WIN) : -1;
+  }
+
+  function seriesOn() {
+    return !!state.series && seriesWinner() === -1;
+  }
+
+  // One dot per game needed to take the series, filled for each game won.
+  function pipsHtml(wins, popLast = false) {
+    let s = '';
+    for (let i = 0; i < SERIES_TO_WIN; i++) {
+      s += `<i class="${i < wins ? 'on' : ''}${popLast && i === wins - 1 ? ' new' : ''}"></i>`;
+    }
+    return s;
+  }
+
   // "vuh-LOSS-ih-rap-tor" -> the stressed (capitalised) syllables in bold.
   function sayHtml(say) {
     return say.split('-').map((part) => (part.length > 1 && part === part.toUpperCase() ? `<b>${part}</b>` : part)).join('-');
@@ -106,13 +139,17 @@
         const pairs = OLD_SIZES[saved.pairs] || saved.pairs;
         const radio = el.form.querySelector(`input[name="size"][value="${pairs}"]`);
         if (radio) radio.checked = true;
+        const series = el.form.querySelector(`input[name="series"][value="${saved.series === SERIES_GAMES ? SERIES_GAMES : 1}"]`);
+        if (series) series.checked = true;
       }
     } catch (e) { /* ignore broken or blocked storage */ }
   }
 
   function saveSettings() {
     try {
-      localStorage.setItem(STORE, JSON.stringify({ name1: el.name1.value, name2: el.name2.value, pairs: state.pairs }));
+      localStorage.setItem(STORE, JSON.stringify({
+        name1: el.name1.value, name2: el.name2.value, pairs: state.pairs, series: state.series ? SERIES_GAMES : 1,
+      }));
     } catch (e) { /* ignore */ }
   }
 
@@ -130,6 +167,7 @@
         current,
         players: state.players.map((p) => ({ name: p.name, score: p.score })),
         deck: state.deck.map((c) => ({ id: c.dino.id, by: c.matched ? c.by : null })),
+        series: state.series ? { wins: state.series.wins.slice() } : null,
       }));
     } catch (e) { /* ignore */ }
   }
@@ -147,6 +185,10 @@
       if (!g || g.v !== 1 || !(Date.now() - g.t < GAME_MAX_AGE)) return null;
       if (!SIZES.includes(g.pairs) || !Array.isArray(g.deck) || g.deck.length !== g.pairs * 2) return null;
       if (![0, 1].includes(g.current) || ![0, 1].includes(g.starter) || !Array.isArray(g.players) || g.players.length !== 2) return null;
+      // a best of five in progress: wins before this game, nobody at three yet
+      const series = g.series ?? null;
+      if (series !== null && !(Array.isArray(series.wins) && series.wins.length === 2 &&
+        series.wins.every((w) => Number.isInteger(w) && w >= 0 && w < SERIES_TO_WIN))) return null;
       const finder = {};
       for (const c of g.deck) {
         if (!DINO_BY_ID[c.id] || ![null, 0, 1].includes(c.by)) return null;
@@ -205,6 +247,8 @@
     state.players[1].name = el.name2.value.trim() || DEFAULT_NAMES[1];
     const picked = el.form.querySelector('input[name="size"]:checked');
     state.pairs = picked ? Number(picked.value) : SIZES[0];
+    const series = el.form.querySelector('input[name="series"]:checked');
+    state.series = series && Number(series.value) === SERIES_GAMES ? { wins: [0, 0] } : null;
     state.starter = 0;
     saveSettings();
     startGame();
@@ -235,6 +279,7 @@
       state.pairs = saved.pairs;
       state.starter = saved.starter;
       state.current = saved.current;
+      state.series = saved.series ? { wins: saved.series.wins.slice() } : null;
       state.deck = saved.deck.map((c, index) => ({ dino: DINO_BY_ID[c.id], index, up: false, matched: c.by !== null, by: c.by }));
     } else {
       state.players.forEach((p) => { p.score = 0; });
@@ -254,7 +299,8 @@
       endGame();
       return;
     }
-    announce(`${possessive(state.players[state.current].name)} turn. Find the matching dinosaurs!`);
+    const which = state.series ? `Game ${gameNumber()} of ${SERIES_GAMES}. ` : '';
+    announce(`${which}${possessive(state.players[state.current].name)} turn. Find the matching dinosaurs!`);
   }
 
   function renderBoard() {
@@ -384,11 +430,13 @@
       const box = el.score[i];
       box.querySelector('.score-name').textContent = p.name;
       box.querySelector('.score-num').textContent = String(p.score);
+      box.querySelector('.pips').innerHTML = state.series ? pipsHtml(state.series.wins[i]) : '';
       box.classList.toggle('active', i === state.current && !state.over);
       box.setAttribute('aria-label', `${p.name}: ${p.score} ${p.score === 1 ? 'pair' : 'pairs'}${i === state.current ? ', playing now' : ''}`);
     });
     const left = state.pairs - state.players[0].score - state.players[1].score;
-    el.pairsLeft.innerHTML = `<b>${left}</b>${left === 1 ? 'pair' : 'pairs'} left`;
+    const game = state.series ? `<span class="game-no">Game ${gameNumber()} of ${SERIES_GAMES}</span>` : '';
+    el.pairsLeft.innerHTML = `${game}<b>${left}</b>${left === 1 ? 'pair' : 'pairs'} left`;
     document.documentElement.style.setProperty('--turn', PLAYER_COLORS[state.current]);
   }
 
@@ -550,41 +598,83 @@
   function endGame() {
     state.over = true;
     state.lock = true;
-    clearGame();
     renderScores();
     const [p1, p2] = state.players;
     const tie = p1.score === p2.score;
     const winner = tie ? null : p1.score > p2.score ? 0 : 1;
+    const name = tie ? '' : state.players[winner].name;
+    const series = state.series;
+    const game = series ? gameNumber() : 0;
+    if (series && !tie) series.wins[winner] += 1;
+    const ongoing = seriesOn();
+    // A best of five that's still going keeps its save (this finished game
+    // plus the wins before it), so a refresh comes straight back here.
+    if (!ongoing) clearGame();
 
     const raptorsInGame = [...new Set(state.deck.map((c) => c.dino))].filter((d) => d.raptor);
     const star = raptorsInGame[Math.floor(Math.random() * raptorsInGame.length)] || DINOS[0];
     el.winArt.innerHTML = star.art();
-    el.winTitle.textContent = tie ? "It's a tie!" : `${state.players[winner].name} wins!`;
+    let title = tie ? "It's a tie!" : `${name} wins!`;
+    if (series && !tie) title = ongoing ? `${name} wins game ${game}!` : `${name} wins the best of five!`;
+    el.winTitle.textContent = title;
     el.winTitle.style.setProperty('--who', tie ? 'var(--navy)' : PLAYER_COLORS[winner]);
+
+    // In a best of five the chips count games won; this game's pairs go in a line above.
+    el.winDetail.hidden = !series;
+    el.winDetail.textContent = series ? `${Math.max(p1.score, p2.score)} pairs to ${Math.min(p1.score, p2.score)}` : '';
     el.winScores.innerHTML = '';
     state.players.forEach((p, i) => {
       const chip = document.createElement('div');
       chip.className = `win-score p${i + 1}`;
-      const name = document.createElement('span');
-      name.textContent = p.name;
-      const num = document.createElement('b');
-      num.textContent = String(p.score);
-      chip.append(name, num);
+      const label = document.createElement('span');
+      label.textContent = p.name;
+      chip.appendChild(label);
+      if (series) {
+        const pips = document.createElement('span');
+        pips.className = 'pips';
+        pips.innerHTML = pipsHtml(series.wins[i], i === winner);
+        chip.appendChild(pips);
+        chip.setAttribute('aria-label', `${p.name}: ${series.wins[i]} ${series.wins[i] === 1 ? 'game' : 'games'}`);
+      } else {
+        const num = document.createElement('b');
+        num.textContent = String(p.score);
+        chip.appendChild(num);
+      }
       el.winScores.appendChild(chip);
     });
-    showOverlay(el.winOverlay, $('againBtn'));
-    announce(tie ? `It's a tie, ${p1.score} pairs each!` : `${state.players[winner].name} wins with ${state.players[winner].score} pairs!`);
-    Sound.win();
+    el.winNote.hidden = !series;
+    if (series) {
+      const most = Math.max(...series.wins);
+      const least = Math.min(...series.wins);
+      el.winNote.textContent = ongoing ? `First to ${SERIES_TO_WIN} games wins the best of five.` : `${name} won ${most} games to ${least}.`;
+    }
+    el.againBtn.textContent = ongoing ? `Start game ${gameNumber()}` : series ? 'New best of 5' : 'Play again';
+    el.newBtn.textContent = ongoing ? 'Quit series' : 'Change game';
+    showOverlay(el.winOverlay, el.againBtn);
+
+    if (tie) announce(`It's a tie, ${p1.score} pairs each!`);
+    else if (ongoing) announce(`${name} wins game ${game}! ${p1.name} has ${series.wins[0]}, ${p2.name} has ${series.wins[1]}.`);
+    else if (series) announce(`${name} wins the best of five, ${Math.max(...series.wins)} games to ${Math.min(...series.wins)}!`);
+    else announce(`${name} wins with ${state.players[winner].score} pairs!`);
+
     const blues = ['#1f86e0', '#7fb8f2', '#f2c94c', '#24427f'];
     const oranges = ['#ee7a1a', '#f2c94c', '#fdc890', '#24427f'];
-    confetti(tie ? ['#1f86e0', '#ee7a1a', '#f2c94c', '#24427f'] : winner === 0 ? blues : oranges);
+    const colors = tie ? ['#1f86e0', '#ee7a1a', '#f2c94c', '#24427f'] : winner === 0 ? blues : oranges;
+    if (ongoing) {
+      // save the roar and the big confetti for winning the whole series
+      Sound.fanfare();
+      confetti(colors, 35);
+    } else {
+      Sound.win();
+      confetti(colors);
+    }
   }
 
-  function confetti(colors) {
+  function confetti(colors, count = 90) {
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     el.confetti.innerHTML = '';
     const frag = document.createDocumentFragment();
-    for (let i = 0; i < 90; i++) {
+    for (let i = 0; i < count; i++) {
       const bit = document.createElement('i');
       bit.style.left = `${Math.random() * 100}%`;
       bit.style.background = colors[i % colors.length];
@@ -599,11 +689,15 @@
     later(() => { el.confetti.innerHTML = ''; }, 5500);
   }
 
-  $('againBtn').addEventListener('click', () => {
+  el.againBtn.addEventListener('click', () => {
     state.starter = 1 - state.starter; // take turns going first
+    if (seriesWinner() !== -1) state.series = { wins: [0, 0] }; // a fresh best of five
     startGame();
   });
-  $('newBtn').addEventListener('click', goHome);
+  el.newBtn.addEventListener('click', () => {
+    if (seriesOn()) confirmQuit();
+    else goHome();
+  });
 
   /* ---------- leaving a game ---------- */
 
@@ -615,6 +709,7 @@
     el.confetti.innerHTML = '';
     state.deck = [];
     state.afterFact = null;
+    state.series = null;
     el.board.innerHTML = '';
     delete el.board.dataset.rows;
     el.game.hidden = true;
@@ -623,13 +718,22 @@
     window.scrollTo(0, 0);
   }
 
+  function confirmQuit() {
+    const series = seriesOn();
+    el.quitTitle.textContent = series ? 'Leave this best of five?' : 'Leave this game?';
+    el.quitText.textContent = series ? 'The series score will be lost.' : 'The scores for this game will be lost.';
+    el.leaveBtn.textContent = series ? 'Leave series' : 'Leave game';
+    showOverlay(el.quitOverlay, $('stayBtn'));
+  }
+
   $('homeBtn').addEventListener('click', () => {
     const started = state.players[0].score + state.players[1].score > 0 || state.flipped.length > 0;
-    if (started && !state.over) showOverlay(el.quitOverlay, $('stayBtn'));
+    const seriesStarted = seriesOn() && gameNumber() > 1;
+    if ((started && !state.over) || seriesStarted) confirmQuit();
     else goHome();
   });
   $('stayBtn').addEventListener('click', () => hideOverlay(el.quitOverlay));
-  $('leaveBtn').addEventListener('click', goHome);
+  el.leaveBtn.addEventListener('click', goHome);
   el.quitOverlay.addEventListener('click', (e) => {
     if (e.target === el.quitOverlay) hideOverlay(el.quitOverlay);
   });

@@ -233,13 +233,19 @@
     }
   }
 
-  // Roar, then a little fanfare.
+  // A little trumpet-style fanfare.
+  function fanfare(at = 0) {
+    if (!ready()) return;
+    const notes = [523.25, 659.25, 783.99, 1046.5, 783.99, 1046.5];
+    const times = [0, 0.15, 0.3, 0.45, 0.7, 0.85];
+    notes.forEach((fr, i) => tone(fr, at + times[i], i === notes.length - 1 ? 0.7 : 0.22, { type: 'triangle', vol: 0.26 }));
+  }
+
+  // Roar, then the fanfare.
   function win() {
     if (!ready()) return;
     roar(0);
-    const notes = [523.25, 659.25, 783.99, 1046.5, 783.99, 1046.5];
-    const times = [1.55, 1.7, 1.85, 2.0, 2.25, 2.4];
-    notes.forEach((fr, i) => tone(fr, times[i], i === notes.length - 1 ? 0.7 : 0.22, { type: 'triangle', vol: 0.26 }));
+    fanfare(1.55);
   }
 
   function setEnabled(on) {
@@ -250,5 +256,5 @@
     if (on) unlock();
   }
 
-  window.Sound = { unlock, flip, flipDown, match, miss, roar, win, setEnabled, isEnabled: () => enabled };
+  window.Sound = { unlock, flip, flipDown, match, miss, roar, fanfare, win, setEnabled, isEnabled: () => enabled };
 })();
