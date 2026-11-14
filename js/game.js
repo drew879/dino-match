@@ -9,6 +9,7 @@
   const DINOS = window.DINOS;
   const Sound = window.Sound;
   const STORE = 'dinoMatch.settings';
+  const CHEAT_STORE = 'dinoMatch.cheat';
   const GAME_STORE = 'dinoMatch.game';
   const GAME_MAX_AGE = 12 * 60 * 60 * 1000; // a saved game older than this starts fresh
   const DEFAULT_NAMES = ['Aidan', 'Baddy'];
@@ -71,7 +72,14 @@
     timers: [],
     afterFact: null,
     series: null, // during a best of five: { wins: [games won by player 1, by player 2] }
+    backStyle: null, // star tint and ring for each card's spot on the card-back picture
   };
+
+  // Cheat mode: the card backs secretly show where every pair is.
+  let cheat = false;
+  try {
+    cheat = localStorage.getItem(CHEAT_STORE) === 'on';
+  } catch (e) { /* storage unavailable: off */ }
 
   /* ---------- helpers ---------- */
 
@@ -254,6 +262,29 @@
     startGame();
   });
 
+  // Three quick taps on the green raptor turn cheat mode on or off.
+  function renderCheat() {
+    $('heroRight').classList.toggle('cheat', cheat);
+  }
+
+  let raptorTaps = [];
+  $('heroRight').addEventListener('click', () => {
+    const now = Date.now();
+    raptorTaps = raptorTaps.filter((t) => now - t < 1200);
+    raptorTaps.push(now);
+    const raptor = $('heroRight');
+    raptor.classList.remove('hop');
+    void raptor.offsetWidth; // restart the hop animation
+    raptor.classList.add('hop');
+    if (raptorTaps.length < 3) return;
+    raptorTaps = [];
+    cheat = !cheat;
+    try {
+      localStorage.setItem(CHEAT_STORE, cheat ? 'on' : 'off');
+    } catch (e) { /* ignore */ }
+    renderCheat();
+  });
+
   /* ---------- game setup ---------- */
 
   // Mostly raptors: about two thirds of the pairs, the rest other dinosaurs.
@@ -288,6 +319,7 @@
       state.deck = shuffle(dinos.flatMap((d) => [d, d])).map((dino, index) => ({ dino, index, up: false, matched: false, by: null }));
     }
 
+    state.backStyle = backStyles();
     el.setup.hidden = true;
     el.game.hidden = false;
     document.documentElement.classList.add('in-game');
@@ -330,6 +362,65 @@
       frag.appendChild(btn);
     });
     el.board.appendChild(frag);
+  }
+
+  /* ---------- card backs ---------- */
+
+  // Each card has a star on the card-back picture, and the stars come in
+  // twos that share a tint. In cheat mode the two are a real pair; otherwise
+  // they're two cards that don't match, so the backs look the same either way.
+  // Seeded from the deal, so the colours stay put through a resize or refresh.
+  function backStyles() {
+    const n = state.deck.length;
+    let seed = 2166136261;
+    for (const ch of state.deck.map((c) => c.dino.id).join()) seed = Math.imul(seed ^ ch.charCodeAt(0), 16777619);
+    const rand = window.CardBack.seeded(seed);
+    const mix = (list) => {
+      const a = list.slice();
+      for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(rand() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+      }
+      return a;
+    };
+
+    const pairs = {};
+    state.deck.forEach((c, i) => (pairs[c.dino.id] = pairs[c.dino.id] || []).push(i));
+    const real = Object.values(pairs);
+    let twos = real;
+    if (!cheat) {
+      const partner = [];
+      for (const [a, b] of real) {
+        partner[a] = b;
+        partner[b] = a;
+      }
+      twos = null;
+      for (let tries = 0; tries < 200 && !twos; tries++) {
+        const order = mix(Array.from({ length: n }, (_, i) => i));
+        const pick = [];
+        for (let i = 0; i < n; i += 2) pick.push([order[i], order[i + 1]]);
+        if (pick.every(([a, b]) => partner[a] !== b)) twos = pick;
+      }
+      // never needed in practice: link each pair to the next one instead
+      if (!twos) twos = real.map((p, k) => [p[0], real[(k + 1) % real.length][1]]);
+    }
+
+    const tints = [];
+    const rings = [];
+    const palette = window.CardBack.TINTS;
+    mix(twos).forEach((two, k) => {
+      for (const i of two) {
+        tints[i] = palette[k % palette.length];
+        rings[i] = k >= palette.length; // more twos than tints: ring some of them
+      }
+    });
+    return { tints, rings };
+  }
+
+  // Draw the card-back picture for this board's rows; every card shares it.
+  function renderBack(counts) {
+    const svg = window.CardBack.svg(counts, state.backStyle.tints, state.backStyle.rings);
+    el.board.style.setProperty('--back', `url("data:image/svg+xml,${encodeURIComponent(svg)}")`);
   }
 
   // Row lengths for n cards in `rows` rows. Rows differ by at most one card
@@ -406,6 +497,7 @@
     const shape = counts.join('-');
     if (el.board.dataset.rows === shape) return;
     el.board.dataset.rows = shape;
+    renderBack(counts);
     const frag = document.createDocumentFragment();
     let i = 0;
     for (const count of counts) {
@@ -749,6 +841,7 @@
   loadSettings();
   renderHero();
   renderSoundButtons();
+  renderCheat();
 
   const savedGame = loadGame();
   if (savedGame) startGame(savedGame);
