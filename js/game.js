@@ -9,7 +9,8 @@
   const DINOS = window.DINOS;
   const Sound = window.Sound;
   const STORE = 'dinoMatch.settings';
-  const CHEAT_STORE = 'dinoMatch.cheat';
+  // one cheat-mode switch per player; 'dinoMatch.cheat' was the old shared one
+  const CHEAT_STORES = ['dinoMatch.cheat1', 'dinoMatch.cheat2'];
   const GAME_STORE = 'dinoMatch.game';
   const GAME_MAX_AGE = 12 * 60 * 60 * 1000; // a saved game older than this starts fresh
   const DEFAULT_NAMES = ['Aidan', 'Baddy'];
@@ -72,13 +73,17 @@
     timers: [],
     afterFact: null,
     series: null, // during a best of five: { wins: [games won by player 1, by player 2] }
-    backStyle: null, // star tint and ring for each card's spot on the card-back picture
+    // star tint and ring for each card's spot on the card-back picture:
+    // `real` marks the true pairs, `decoy` pairs up cards that don't match
+    backStyle: null,
   };
 
-  // Cheat mode: the card backs secretly show where every pair is.
-  let cheat = false;
+  // Cheat mode, per player: on your turn the card backs secretly show
+  // where every pair is.
+  const cheat = [false, false];
   try {
-    cheat = localStorage.getItem(CHEAT_STORE) === 'on';
+    localStorage.removeItem('dinoMatch.cheat');
+    CHEAT_STORES.forEach((key, i) => { cheat[i] = localStorage.getItem(key) === 'on'; });
   } catch (e) { /* storage unavailable: off */ }
 
   /* ---------- helpers ---------- */
@@ -262,27 +267,31 @@
     startGame();
   });
 
-  // Three quick taps on the green raptor turn cheat mode on or off.
+  // Three quick taps on a raptor turn cheat mode on or off: the left one
+  // for player 1, the right one for player 2.
+  const RAPTORS = [$('heroLeft'), $('heroRight')];
+
   function renderCheat() {
-    $('heroRight').classList.toggle('cheat', cheat);
+    RAPTORS.forEach((raptor, i) => raptor.classList.toggle('cheat', cheat[i]));
   }
 
-  let raptorTaps = [];
-  $('heroRight').addEventListener('click', () => {
-    const now = Date.now();
-    raptorTaps = raptorTaps.filter((t) => now - t < 1200);
-    raptorTaps.push(now);
-    const raptor = $('heroRight');
-    raptor.classList.remove('hop');
-    void raptor.offsetWidth; // restart the hop animation
-    raptor.classList.add('hop');
-    if (raptorTaps.length < 3) return;
-    raptorTaps = [];
-    cheat = !cheat;
-    try {
-      localStorage.setItem(CHEAT_STORE, cheat ? 'on' : 'off');
-    } catch (e) { /* ignore */ }
-    renderCheat();
+  RAPTORS.forEach((raptor, player) => {
+    let taps = [];
+    raptor.addEventListener('click', () => {
+      const now = Date.now();
+      taps = taps.filter((t) => now - t < 1200);
+      taps.push(now);
+      raptor.classList.remove('hop');
+      void raptor.offsetWidth; // restart the hop animation
+      raptor.classList.add('hop');
+      if (taps.length < 3) return;
+      taps = [];
+      cheat[player] = !cheat[player];
+      try {
+        localStorage.setItem(CHEAT_STORES[player], cheat[player] ? 'on' : 'off');
+      } catch (e) { /* ignore */ }
+      renderCheat();
+    });
   });
 
   /* ---------- game setup ---------- */
@@ -338,6 +347,7 @@
   function renderBoard() {
     el.board.innerHTML = '';
     delete el.board.dataset.rows; // layoutBoard sorts the new cards into rows
+    backShown = ''; // a new deal needs a new card-back picture
     const frag = document.createDocumentFragment();
     state.deck.forEach((card, i) => {
       const btn = document.createElement('button');
@@ -367,9 +377,10 @@
   /* ---------- card backs ---------- */
 
   // Each card has a star on the card-back picture, and the stars come in
-  // twos that share a tint. In cheat mode the two are a real pair; otherwise
-  // they're two cards that don't match, so the backs look the same either way.
-  // Seeded from the deal, so the colours stay put through a resize or refresh.
+  // twos that share a tint. In the `real` colouring the two are a pair; in
+  // the `decoy` one they're two cards that don't match, so the backs look the
+  // same either way. Both are seeded from the deal, so they stay put through
+  // a resize or refresh, and a player keeps the same decoy all game.
   function backStyles() {
     const n = state.deck.length;
     let seed = 2166136261;
@@ -387,40 +398,54 @@
     const pairs = {};
     state.deck.forEach((c, i) => (pairs[c.dino.id] = pairs[c.dino.id] || []).push(i));
     const real = Object.values(pairs);
-    let twos = real;
-    if (!cheat) {
-      const partner = [];
-      for (const [a, b] of real) {
-        partner[a] = b;
-        partner[b] = a;
-      }
-      twos = null;
-      for (let tries = 0; tries < 200 && !twos; tries++) {
-        const order = mix(Array.from({ length: n }, (_, i) => i));
-        const pick = [];
-        for (let i = 0; i < n; i += 2) pick.push([order[i], order[i + 1]]);
-        if (pick.every(([a, b]) => partner[a] !== b)) twos = pick;
-      }
-      // never needed in practice: link each pair to the next one instead
-      if (!twos) twos = real.map((p, k) => [p[0], real[(k + 1) % real.length][1]]);
+    const partner = [];
+    for (const [a, b] of real) {
+      partner[a] = b;
+      partner[b] = a;
     }
+    let decoy = null;
+    for (let tries = 0; tries < 200 && !decoy; tries++) {
+      const order = mix(Array.from({ length: n }, (_, i) => i));
+      const pick = [];
+      for (let i = 0; i < n; i += 2) pick.push([order[i], order[i + 1]]);
+      if (pick.every(([a, b]) => partner[a] !== b)) decoy = pick;
+    }
+    // never needed in practice: link each pair to the next one instead
+    if (!decoy) decoy = real.map((p, k) => [p[0], real[(k + 1) % real.length][1]]);
 
-    const tints = [];
-    const rings = [];
     const palette = window.CardBack.TINTS;
-    mix(twos).forEach((two, k) => {
-      for (const i of two) {
-        tints[i] = palette[k % palette.length];
-        rings[i] = k >= palette.length; // more twos than tints: ring some of them
-      }
-    });
-    return { tints, rings };
+    const colour = (twos) => {
+      const tints = [];
+      const rings = [];
+      mix(twos).forEach((two, k) => {
+        for (const i of two) {
+          tints[i] = palette[k % palette.length];
+          rings[i] = k >= palette.length; // more twos than tints: ring some of them
+        }
+      });
+      return { tints, rings };
+    };
+    return { real: colour(real), decoy: colour(decoy) };
   }
 
-  // Draw the card-back picture for this board's rows; every card shares it.
-  function renderBack(counts) {
-    const svg = window.CardBack.svg(counts, state.backStyle.tints, state.backStyle.rings);
-    el.board.style.setProperty('--back', `url("data:image/svg+xml,${encodeURIComponent(svg)}")`);
+  // The card backs have two stacked picture layers, so a change of colouring
+  // between turns can fade in rather than snap.
+  let backLayer = 0; // the layer on show
+  let backShown = ''; // board rows and colouring of the picture on show
+
+  // Draw the card-back picture for the current player: the real pairs if they
+  // have cheat mode on, the decoy otherwise. Every card shares the picture.
+  function renderBack(fade = false) {
+    const view = cheat[state.current] ? 'real' : 'decoy';
+    const key = `${el.board.dataset.rows}/${view}`;
+    if (key === backShown) return;
+    backShown = key;
+    const counts = el.board.dataset.rows.split('-').map(Number);
+    const style = state.backStyle[view];
+    const url = `url("data:image/svg+xml,${encodeURIComponent(window.CardBack.svg(counts, style.tints, style.rings))}")`;
+    if (fade) backLayer = 1 - backLayer;
+    el.board.style.setProperty(`--back-${backLayer}`, url);
+    el.board.classList.toggle('back-1', backLayer === 1);
   }
 
   // Row lengths for n cards in `rows` rows. Rows differ by at most one card
@@ -497,7 +522,7 @@
     const shape = counts.join('-');
     if (el.board.dataset.rows === shape) return;
     el.board.dataset.rows = shape;
-    renderBack(counts);
+    renderBack();
     const frag = document.createDocumentFragment();
     let i = 0;
     for (const count of counts) {
@@ -629,6 +654,7 @@
     Sound.flipDown();
     state.flipped = [];
     state.current = 1 - state.current;
+    renderBack(true); // fade to the next player's colouring as the cards turn over
     renderScores();
     saveGame();
     announce(`Not a match. ${possessive(state.players[state.current].name)} turn.`);
